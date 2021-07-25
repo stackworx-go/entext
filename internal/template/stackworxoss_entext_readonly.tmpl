@@ -1,0 +1,118 @@
+{{/* gotype: entgo.io/ent/entc/gen.Graph */}}
+
+{{ define "stackworxoss_entext_readonly" }}
+
+{{ $pkg := base $.Config.Package }}
+{{ template "header" $ }}
+
+import (
+    "context"
+    "errors"
+    "fmt"
+	"log"
+
+	"{{ $.Config.Package }}/migrate"
+	{{ range $n := $.Nodes }}
+		"{{ $n.Config.Package }}/{{ $n.Package }}"
+	{{- end }}
+
+	"entgo.io/ent/dialect"
+	{{ range $import := $.Storage.Imports -}}
+		"{{ $import }}"
+	{{ end -}}
+)
+
+// ReadonlyClient is the client that holds all readonly ent builders.
+type ReadonlyClient struct {
+    client *Client
+	config
+	{{- range $n := $.Nodes }}
+		// {{ $n.Name }} is the client for interacting with the {{ $n.Name }} builders.
+		{{ $n.Name }} Readonly{{ $n.Name }}Client
+	{{- end }}
+}
+
+var ErrReadOnly = errors.New("readonly only driver")
+
+type readonlyDriver struct{ dialect.Driver }
+
+func (r *readonlyDriver) Exec(context.Context, string, interface{}, interface{}) error {
+	return ErrReadOnly
+}
+
+func (r *readonlyDriver) BeginTx(ctx context.Context, opts *sql.TxOptions) (dialect.Tx, error) {
+	return r.Driver.(interface {
+		BeginTx(context.Context, *sql.TxOptions) (dialect.Tx, error)
+	}).BeginTx(ctx, opts)
+}
+
+// NewReadonlyClient returns a read only client
+func NewReadonlyClient(opts ...Option) *ReadonlyClient {
+	client := NewClient(opts...)
+	client.driver = &readonlyDriver{client.driver}
+	return &ReadonlyClient{
+	    client: client,
+	    config: client.config,
+        {{- range $n := $.Nodes }}
+            {{ $n.Name }}: client.{{ $n.Name }},
+        {{- end }}
+	}
+}
+
+func (c *ReadonlyClient) Use(hooks ...Hook) {
+	c.client.Use(hooks...)
+}
+
+{{ range $n := $.Nodes }}
+{{ $client := print $n.Name "Client" }}
+// {{ $client }} is a client for the {{ $n.Name }} schema.
+type Readonly{{ $client }} interface {
+    Query() *{{ $n.Name }}Query
+    Get(ctx context.Context, id {{ $n.ID.Type }}) (*{{ $n.Name }}, error)
+    GetX(ctx context.Context, id {{ $n.ID.Type }}) *{{ $n.Name }}
+    {{- $rec := $n.Receiver }}{{ if eq $rec "c" }}{{ $rec = printf "%.2s" $n.Name | lower }}{{ end -}}
+    {{- range $e := $n.Edges }}
+    {{- $builder := $e.Type.QueryName -}}
+    {{- $arg := $rec }}{{ if eq $arg "id" }}{{ $arg = "node" }}{{ end }}
+    Query{{ pascal $e.Name }}({{ $arg }} *{{ $n.Name }}) *{{ $builder }}
+    {{- end -}}
+}
+{{- end }}
+
+type ReadonlyTx struct {
+    tx *Tx
+    {{- range $n := $.Nodes }}
+        // {{ $n.Name }} is the client for interacting with the {{ $n.Name }} builders.
+        {{ $n.Name }} Readonly{{ $n.Name }}Client
+    {{- end }}
+}
+
+// Commit commits the transaction.
+func (tx *ReadonlyTx) Commit() error {
+	return tx.tx.Commit()
+}
+
+// OnCommit adds a hook to call on commit.
+func (tx *ReadonlyTx) OnCommit(f CommitHook) {
+	tx.tx.OnCommit(f)
+}
+
+func (c *ReadonlyClient) BeginTx(ctx context.Context, opts *sql.TxOptions) (*ReadonlyTx, error) {
+	if opts == nil {
+		opts = &sql.TxOptions{}
+	}
+    tx, err := c.client.BeginTx(ctx, &sql.TxOptions{
+		Isolation: opts.Isolation,
+		ReadOnly: true,
+    })
+    if err != nil {
+        return nil, err
+    }
+    return &ReadonlyTx{
+        tx: tx,
+        {{- range $n := $.Nodes }}
+            {{ $n.Name }}: tx.{{ $n.Name }},
+        {{- end }}
+    }, nil
+}
+{{ end }}

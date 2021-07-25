@@ -1,0 +1,117 @@
+{{/* gotype: entgo.io/ent/entc/gen.Graph */}}
+{{ define "stackworxoss_entext_pointintime_deactivate" }}
+
+{{ $pkg := base $.Config.Package }}
+
+{{ template "header" $ }}
+
+import (
+    "context"
+	"time"
+
+    "github.com/jackc/pgtype"
+	{{ range $n := $.Nodes -}}
+        {{ range $e := $n.Edges -}}
+            {{ if $annotation := $e.Type.Annotations.StackworxOSS }}
+            {{ if $annotation.pointInTime }}
+                "{{ $.Config.Package }}/{{ $e.Type.Package }}"
+            {{ end }}
+            {{ end }}
+        {{ end }}
+    {{ end }}
+)
+
+{{ range $n := $.Nodes -}}
+    {{ range $e := $n.Edges -}}
+        {{ if $annotation := $e.Type.Annotations.StackworxOSS }}
+        {{ if $annotation.pointInTime }}
+
+        {{ $receiver := $n.Receiver }}
+        {{ $builder := $n.UpdateName }}
+
+        func ({{ $receiver }} *{{ $e.Type.Name }}Client) Update{{ $e.Type.Name }}(ctx context.Context, parent *{{ $n.Name }}, create *{{ $e.Type.CreateName }}) (*{{ $e.Type.Name }}, error) {
+            {{ $e.Name }}, err := {{ $receiver }}.Query().
+                Where(
+                    {{ $e.Type.Package }}.Active(true),
+                    // TODO: this predicate may not exist
+                    {{ $e.Type.Package }}.{{ $n.Name }}ID(parent.ID),
+                ).
+                Only(ctx)
+            // TODO: inspect error
+            if err != nil {
+                return nil, err
+            }
+            _, err = {{ $receiver }}.UpdateOne({{ $e.Name }}).SetDuration(&pgtype.Tstzrange{
+                Lower:     statuses.Duration.Lower,
+                Upper:     pgtype.Timestamptz{
+                    Time:             time.Now(),
+                    Status:           pgtype.Present,
+                },
+                LowerType: statuses.Duration.LowerType,
+                UpperType: pgtype.Inclusive,
+                Status:    statuses.Duration.Status,
+            }).Save(ctx)
+            if err != nil {
+                return nil, err
+            }
+            create.Set{{ $n.Name }}(parent).SetActive(false).SetDuration(&pgtype.Tstzrange{
+                Lower: pgtype.Timestamptz{
+                    Time:   time.Now(),
+                    Status: pgtype.Present,
+                },
+                Upper: pgtype.Timestamptz{
+                    Status:           pgtype.Null,
+                    InfinityModifier: pgtype.Infinity,
+                },
+                LowerType: statuses.Duration.LowerType,
+                UpperType: pgtype.Unbounded,
+                Status:    statuses.Duration.Status,
+            })
+            bulks, err := {{ $receiver }}.CreateBulk(create).Save(ctx)
+            if err != nil {
+                return nil, err
+            }
+            return bulks[0], nil
+        }
+
+        func ({{ $receiver }} *{{ $e.Type.Name }}Client) Deactivate{{ $e.Type.Name }}(ctx context.Context, parent *{{ $n.Name }}) error {
+            {{ $e.Name }}, err := {{ $receiver }}.Query().
+                Where(
+                    {{ $e.Type.Package }}.Active(true),
+                    // TODO: this predicate may not exist
+                    {{ $e.Type.Package }}.{{ $n.Name }}ID(parent.ID),
+                ).
+                Only(ctx)
+            // TODO: inspect error
+            if err != nil {
+                return err
+            }
+            _, err = {{ $receiver }}.UpdateOne({{ $e.Name }}).SetActive(false).SetDuration(&pgtype.Tstzrange{
+                Lower:     statuses.Duration.Lower,
+                Upper:     pgtype.Timestamptz{
+                    Time:             time.Now(),
+                    Status:           pgtype.Present,
+                },
+                LowerType: statuses.Duration.LowerType,
+                UpperType: pgtype.Inclusive,
+                Status:    statuses.Duration.Status,
+            }).Save(ctx)
+            return err
+        }
+
+        {{ $builder = $n.QueryName }}
+        {{ $ebuilder := $e.Type.QueryName }}
+        // TODO
+        func ({{ $receiver }} *{{ $builder }}) WithActive{{ pascal $e.Name }}() *{{ $builder }} {
+            return {{ $receiver }}.With{{ pascal $e.Name }}(func(q *{{ $e.Type.QueryName }}) {
+                q.Where({{ $e.Type.Package }}.Active(true))
+            })
+        }
+
+        {{ end }}
+        {{ end }}
+    {{ end }}
+{{ end }}
+
+
+{{ end }}
